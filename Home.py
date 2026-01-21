@@ -144,59 +144,68 @@ merged_df = merged_df[
 ].copy()
 
 # 4. DBSCAN 군집화
-if len(merged_df) > 0:
+@st.cache_data
+def get_clustered_block_stats(_df_build, _cctv, _lamp, _noise, _conv, _store):
+    """
+    DBSCAN 군집화 및 블록별 통계 계산은 데이터가 변하지 않는 한 
+    처음 한 번만 실행하고 결과를 메모리에 저장합니다.
+    """
+    if len(_df_build) == 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # DBSCAN 설정
     block_eps = 17
     block_min = 3
-    coords = np.radians(merged_df[['lat', 'lon']].values)
+    coords = np.radians(_df_build[['lat', 'lon']].values)
     kms_per_radian = 6371.0088
     epsilon = (block_eps / 1000) / kms_per_radian
     
     db = DBSCAN(eps=epsilon, min_samples=block_min, metric='haversine', algorithm='ball_tree').fit(coords)
-    merged_df['cluster'] = db.labels_
+    _df_build['cluster'] = db.labels_
     
-    clustered_df = merged_df[merged_df['cluster'] != -1].copy()
-    
+    clustered_df = _df_build[_df_build['cluster'] != -1].copy()
+    if clustered_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # 블록 통계 계산
     block_stats = clustered_df.groupby('cluster').agg({
         'lat': 'mean',
         'lon': 'mean',
         '월세': 'mean',
         '보증금': 'mean',
-        '노후도': 'mean',  # [추가] 노후도 평균값 계산
+        '노후도': 'mean',
         '건물명': 'count'
     }).reset_index()
     
+    # 주변 시설 개수 계산 (가장 오래 걸리는 부분)
     def count_nearby(center_lat, center_lon, target_df, radius=100):
         if target_df.empty: return 0
         dists = calculate_distance(center_lat, center_lon, target_df['lat'].values, target_df['lon'].values)
         return np.sum(dists <= radius)
 
-    block_stats['cctv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], cctv_df), axis=1)
-    block_stats['conv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], convenience_df), axis=1)
-    # [추가] 블록 중심 100m 이내 소음원 개수 계산
-    block_stats['noise_count'] = block_stats.apply(
-        lambda row: count_nearby(row['lat'], row['lon'], noise_df, radius=100), 
-        axis=1
-    )
-    # [추가] 블록 중심 100m 이내 상가 개수 계산
-    block_stats['store_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], store_df), axis=1)
-    block_stats['lamp_count'] = block_stats.apply(
-        lambda row: count_nearby(row['lat'], row['lon'], lamp_df), 
-        axis=1
+    block_stats['cctv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], _cctv), axis=1)
+    block_stats['conv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], _conv), axis=1)
+    block_stats['noise_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], _noise, radius=100), axis=1)
+    block_stats['store_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], _store), axis=1)
+    block_stats['lamp_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], _lamp), axis=1)
+
+    return block_stats, clustered_df
+
+with st.spinner("블록 분석 및 통계 계산 중..."):
+    block_stats, clustered_df = get_clustered_block_stats(
+        merged_df, cctv_df, lamp_df, noise_df, convenience_df, store_df
     )
 
-    # ---------------------------------------------------------
-    # [여기에 추가] 사용자가 설정한 슬라이더 값으로 블록 필터링
-    # ---------------------------------------------------------
-    # 1. 블록별 평균 가격이 슬라이더 범위 내에 있는지 확인
-    # [수정] 모든 조건(가격 + 노후도 + CCTV + 편의점)으로 블록 필터링
+# [유지] 슬라이더 값에 따른 필터링 (이 부분은 캐싱하지 않음 - 실시간 반응 필요)
+if not block_stats.empty:
     filtered_block_stats = block_stats[
         (block_stats['보증금'] >= deposit_range[0]) & (block_stats['보증금'] <= deposit_range[1]) &
         (block_stats['월세'] >= rent_range[0]) & (block_stats['월세'] <= rent_range[1]) &
         (block_stats['노후도'] >= age_range[0]) & (block_stats['노후도'] <= age_range[1]) &
         (block_stats['cctv_count'] >= cctv_min) &
-        (block_stats['lamp_count'] >= lamp_min) & # CCTV 최소 조건
-        (block_stats['noise_count'] <= noise_max)&
-        (block_stats['store_count'] >= store_min) # [추가] 상가 최소 조건   
+        (block_stats['lamp_count'] >= lamp_min) &
+        (block_stats['noise_count'] <= noise_max) &
+        (block_stats['store_count'] >= store_min)
     ]
     
     # [추가] 편의점 필수 체크 시: 위에서 걸러진 데이터 중 편의점이 0개인 블록은 제외
