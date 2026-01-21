@@ -70,8 +70,8 @@ with st.sidebar:
     with st.expander("원룸 정보(블록)", expanded=False):
         deposit_range = st.slider(
             "평균 보증금 (만원)", 
-            min_value=50, max_value=1000, 
-            value=(50, 1000), step=5
+            min_value=50, max_value=500, 
+            value=(50, 500), step=5
         )
         rent_range = st.slider(
             "평균 월세 (만원)", 
@@ -115,7 +115,7 @@ with st.sidebar:
         )
 
     st.divider()
-    with st.expander("표시 항목", expanded=True):
+    with st.expander("지도 표시 항목", expanded=True):
         show_cctv = st.toggle("CCTV (🎥)", value=False)
         show_lamp_heat = st.toggle("가로등 밀집도(🔥)", value=False) # 히트맵 토글 추가
         show_conv = st.toggle("편의점 (🛒)", value=False)
@@ -223,24 +223,77 @@ final_store = store_df if show_store else pd.DataFrame()
 # 5. 지도 그리기 섹션
 final_lamps = lamp_df if show_lamp_heat else pd.DataFrame() # 추가
 
+if 'selected_cluster' not in st.session_state:
+    st.session_state.selected_cluster = None
+
+
 # [수정] filtered_block_stats를 기준으로 체크
 if len(filtered_block_stats) > 0:
     st.success(f"📍 조건에 맞는 블록을 **{len(filtered_block_stats)}개** 찾았습니다.")
-    
-    # [수정] draw_map에 필터링된 데이터 전달
-    m = draw_map(
-        filtered_clustered_df, 
-        filtered_block_stats, 
-        final_cctv, 
-        final_noise, 
-        final_conv, 
-        final_store,
-        final_lamps
-    )
-    
-    if m:
-        st_folium(m, width="100%", height=600)
-    else:
-        st.error("지도 생성 실패")
+    col_left, col_right = st.columns([7, 3])
+
+    with col_left:
+        # 지도 출력
+        m = draw_map(
+            filtered_clustered_df, 
+            filtered_block_stats, 
+            final_cctv, final_noise, final_conv, final_store, final_lamps, selected_id=st.session_state.selected_cluster
+        )
+        # 나중에 클릭 이벤트를 잡기 위해 변수 output에 저장
+        output = st_folium(m, width="100%", height=650, key="main_map")
+
+    with col_right:
+        with st.container(border=True):
+            st.subheader("순위")
+            
+            # (1) UI 및 가중치 설정
+            priority = st.radio(
+                "가장 중요하게 생각하는 조건은?",
+                ("🏠신축", "🛡️안전성", "🛒편의"),
+                horizontal=True,
+                key="rank_priority"
+            )
+            st.divider()
+
+            if priority == "🏠신축":
+                w_age, w_safety, w_conv = 70, 15, 15
+            elif priority == "🛡️안전성": # 오타 수정: 🛡️ 안전성 -> 🛡️안전성 (공백 확인)
+                w_age, w_safety, w_conv = 15, 70, 15
+            else:
+                w_age, w_safety, w_conv = 15, 15, 70
+
+            # (2) [먼저] 데이터 점수 계산 로직 (계산이 먼저 와야 합니다)
+            def normalize(series, reverse=False):
+                if series.max() == series.min(): return series * 0 + 0.5
+                norm = (series - series.min()) / (series.max() - series.min())
+                return 1 - norm if reverse else norm
+
+            ranking_df = filtered_block_stats.copy()
+
+            score_age = normalize(ranking_df['노후도'], reverse=True)
+            ranking_df['safety_total'] = ranking_df['cctv_count'] + ranking_df['lamp_count']
+            score_safety = normalize(ranking_df['safety_total'])
+            ranking_df['conv_total'] = ranking_df['conv_count'] + ranking_df['store_count']
+            score_conv = normalize(ranking_df['conv_total'])
+
+            ranking_df['total_score'] = (
+                (score_age * w_age) + 
+                (score_safety * w_safety) + 
+                (score_conv * w_conv)
+            )
+
+            # (3) [그 다음] 정렬하여 top5 생성
+            top5 = ranking_df.sort_values(by='total_score', ascending=False).head(5)
+
+            st.write("🔍 **분석된 추천 순위**")
+
+            # (4) [마지막] 계산된 top5를 사용하여 리스트 출력
+            for i, (idx, row) in enumerate(top5.iterrows()):
+                cluster_id = int(row['cluster'])
+                score = round(row['total_score'], 1)
+                
+                if st.button(f"🥇 {i+1}위: Block #{cluster_id} ({score}점)", key=f"rank_{cluster_id}", use_container_width=True):
+                    st.session_state.selected_cluster = cluster_id
+                    st.rerun()
 else:
-    st.warning("선택하신 가격 조건에 맞는 블록이 없습니다.")
+    st.warning("선택하신 조건에 맞는 블록이 없습니다.")

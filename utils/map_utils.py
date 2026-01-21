@@ -5,9 +5,9 @@ from scipy.spatial import ConvexHull, QhullError
 from folium.plugins import HeatMap
 
 
-def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=None, store_df=None, lamp_df=None):
+def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=None, store_df=None, lamp_df=None, selected_id=None):
     
-    m = folium.Map(location=[35.8359, 128.7535], zoom_start=16, tiles='CartoDB positron')
+    m = folium.Map(location=[35.8389, 128.7552], zoom_start=15.5, tiles='CartoDB positron')
 
     # (1) 영남대역 (가장 아래 레이어)
     folium.Marker([35.8359, 128.7535], tooltip="<b>영남대역</b>", icon=folium.Icon(color='red', icon='flag', prefix='fa')).add_to(m)
@@ -90,6 +90,28 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
     
     for cluster_id, group in grouped:
         stats = block_stats[block_stats['cluster'] == cluster_id].iloc[0]
+
+        # --- [여기서부터 수정 및 추가] ---
+        # 현재 블록이 선택된 블록인지 확인
+        is_selected = (selected_id is not None and int(cluster_id) == int(selected_id))
+        
+        # 선택 여부에 따른 색상 및 스타일 결정
+        # 선택 시: 노란색 테두리와 짙은 노랑 채우기 / 미선택 시: 기존 회색
+        f_color = '#FFFF00' if is_selected else '#808080'  # 채우기 색상
+        l_color = '#FFD700' if is_selected else '#808080'  # 테두리 색상
+        weight = 4 if is_selected else 1                  # 테두리 두께
+        opacity = 0.6 if is_selected else 0.4              # 투명도
+
+        # 개별 블록마다 스타일 함수를 새로 정의
+        current_style = lambda x, fc=f_color, lc=l_color, w=weight, o=opacity: {
+            'fillColor': fc,
+            'color': lc,
+            'fillOpacity': o,
+            'weight': w
+        }
+        # 하이라이트(마우스 올렸을 때)는 공통으로 사용하거나 비슷하게 조절
+        current_highlight = lambda x: {'fillColor': '#505050', 'color': '#333333', 'fillOpacity': 0.7, 'weight': 3}
+
         avg_rent, avg_deposit = int(stats['월세']), int(stats['보증금'])
         count, cctv_cnt, conv_cnt = int(stats['건물명']), int(stats['cctv_count']), int(stats['conv_count'])
         avg_age = round(stats['노후도'], 1)
@@ -105,6 +127,7 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
             <b>편의점:</b> {conv_cnt}개
         </div>
         """
+        
 
         points = group[['lat', 'lon']].values
         try:
@@ -128,8 +151,8 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
         # 블록 영역을 가장 마지막에 그려서 툴팁이 최상단에 오도록 함
         folium.GeoJson(
             geo_json_data,
-            style_function=style_function,
-            highlight_function=highlight_function,
+            style_function=current_style,   # 선택 여부가 반영된 동적 스타일 적용
+            highlight_function=current_highlight,
             tooltip=tooltip_html
         ).add_to(m)
 
