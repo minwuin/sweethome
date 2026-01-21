@@ -39,6 +39,7 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
         count = int(stats['건물명'])
         cctv_cnt = int(stats['cctv_count'])
         conv_cnt = int(stats['conv_count'])
+        avg_age = round(stats['노후도'], 1)
         
         # 툴팁 내용 (HTML)
         tooltip_html = f"""
@@ -47,11 +48,12 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
             <hr style="margin:5px 0;">
             <b>월세:</b> {avg_rent}만원<br>
             <b>보증금:</b> {avg_deposit}만원<br>
-            <b>건물:</b> {count}개<br>
+            <b>평균 노후도:</b> {avg_age}<br>  <b>건물:</b> {count}개<br>
             <b>CCTV:</b> {cctv_cnt}개<br>
             <b>편의점:</b> {conv_cnt}개
         </div>
         """
+
         
         # 좌표 추출
         points = group[['lat', 'lon']].values

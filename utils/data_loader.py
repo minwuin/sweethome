@@ -55,6 +55,10 @@ def get_real_estate_data(lawd_cd="47290", months=24, force_update=False):
         try: df = pd.read_csv(ROOM_CSV_PATH, encoding='utf-8-sig')
         except: df = pd.read_csv(ROOM_CSV_PATH, encoding='cp949')
         df.columns = df.columns.str.replace('\ufeff', '').str.strip()
+        # [추가] 기존 파일 로드 시에도 보증금 1000만원 초과 데이터 삭제
+        if '보증금' in df.columns:
+            df = df[df['보증금'] <= 1000]
+
         if '법정동' in df.columns:
             mask = df['법정동'].apply(lambda x: any(target in str(x) for target in TARGET_DONGS))
             return df[mask]
@@ -68,10 +72,17 @@ def get_real_estate_data(lawd_cd="47290", months=24, force_update=False):
     if not all_data: return pd.DataFrame()
     df = pd.DataFrame(all_data)
     df.columns = df.columns.str.replace('\ufeff', '').str.strip()
+
+    # [수정] API로 새로 받아온 데이터에서 보증금 1000만원 초과 제거
+    # 보통 대학가 원룸 블록 분석을 방해하는 '아파트'나 '대형 빌라' 거래를 거르는 역할
+    df = df[df['보증금'] <= 1000]
+    
     mask = df['법정동'].apply(lambda x: any(target in str(x) for target in TARGET_DONGS))
     df_filtered = df[mask].copy()
+
     current_year = datetime.now().year
     df_filtered['노후도'] = df_filtered['건축년도'].apply(lambda x: current_year - x if x > 0 else 0)
+    
     df_filtered.to_csv(ROOM_CSV_PATH, index=False, encoding='utf-8-sig')
     return df_filtered
 

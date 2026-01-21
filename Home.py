@@ -57,22 +57,35 @@ df_build = pd.read_csv(BUILD_PATH)
 with st.sidebar:
     # [추가] 가격 필터 슬라이더
     st.header("🔍 필터 설정")
-    with st.expander("💰 가격 조건 (블록 평균)", expanded=True):
+    with st.expander("원룸 정보(블록)", expanded=True):
         deposit_range = st.slider(
             "평균 보증금 (만원)", 
-            min_value=50, max_value=2000, 
-            value=(50, 2000), step=10
+            min_value=50, max_value=1000, 
+            value=(50, 1000), step=5
         )
         rent_range = st.slider(
             "평균 월세 (만원)", 
             min_value=20, max_value=100, 
             value=(20, 100), step=5
         )
-    
+        age_range = st.slider(
+            "평균 노후도", 
+            min_value=0, max_value=100, 
+            value=(0, 100), step=1
+        )
+
+    with st.expander(" 편의/안전", expanded=True):
+        # 편의점 유무 (체크박스)
+        need_conv = st.checkbox("100m 이내 편의점 필수", value=False)
+        
+        # CCTV 개수 (슬라이더: 0 ~ 10개)
+        cctv_min = st.slider(
+            "100m 이내 최소 CCTV 개수", 
+            min_value=0, max_value=10, 
+            value=0, step=1
+        )
     st.divider()
-    st.subheader("시설 표시")
-    # ... (이하 show_cctv 등 기존 코드 유지)
-    st.divider()
+
     st.subheader("시설 표시")
     show_cctv = st.toggle("CCTV (🎥)", value=True)
     show_conv = st.toggle("편의점 (🛒)", value=True)
@@ -118,6 +131,7 @@ if len(merged_df) > 0:
         'lon': 'mean',
         '월세': 'mean',
         '보증금': 'mean',
+        '노후도': 'mean',  # [추가] 노후도 평균값 계산
         '건물명': 'count'
     }).reset_index()
     
@@ -133,17 +147,23 @@ if len(merged_df) > 0:
     # [여기에 추가] 사용자가 설정한 슬라이더 값으로 블록 필터링
     # ---------------------------------------------------------
     # 1. 블록별 평균 가격이 슬라이더 범위 내에 있는지 확인
+    # [수정] 모든 조건(가격 + 노후도 + CCTV + 편의점)으로 블록 필터링
     filtered_block_stats = block_stats[
         (block_stats['보증금'] >= deposit_range[0]) & (block_stats['보증금'] <= deposit_range[1]) &
-        (block_stats['월세'] >= rent_range[0]) & (block_stats['월세'] <= rent_range[1])
+        (block_stats['월세'] >= rent_range[0]) & (block_stats['월세'] <= rent_range[1]) &
+        (block_stats['노후도'] >= age_range[0]) & (block_stats['노후도'] <= age_range[1]) &
+        (block_stats['cctv_count'] >= cctv_min) # CCTV 조건
     ]
+    
+    # [추가] 편의점 필수 체크 시: 위에서 걸러진 데이터 중 편의점이 0개인 블록은 제외
+    if need_conv:
+        filtered_block_stats = filtered_block_stats[filtered_block_stats['conv_count'] > 0]
     
     # 2. 필터링된 블록들의 cluster ID 목록을 가져옴
     valid_cluster_ids = filtered_block_stats['cluster'].tolist()
     
     # 3. 지도에 표시할 개별 건물 데이터도 해당 블록 ID만 남김
     filtered_clustered_df = clustered_df[clustered_df['cluster'].isin(valid_cluster_ids)]
-
 else:
     clustered_df = pd.DataFrame()
     block_stats = pd.DataFrame()
