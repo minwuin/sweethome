@@ -10,7 +10,8 @@ from utils.data_loader import (
     get_cctv_data, 
     get_noise_data, 
     get_convenience_data, 
-    get_store_data
+    get_store_data,
+    get_lamp_data
 )
 
 def calculate_distance(lat1, lon1, lat2_arr, lon2_arr):
@@ -30,10 +31,12 @@ FIXED_BOUNDS = {
     'min_lon': 128.750314, 'max_lon': 128.760809
 }
 
+
 # 1. 데이터 로드
 with st.spinner("주변 시설 데이터를 불러오는 중입니다..."):
     df_price = get_real_estate_data()
     cctv_df = get_cctv_data()
+    lamp_df = get_lamp_data()
     
     # [수정] CCTV 데이터 범위 제한 (범위 밖 데이터 즉시 제거)
     if not cctv_df.empty:
@@ -42,6 +45,13 @@ with st.spinner("주변 시설 데이터를 불러오는 중입니다..."):
             (cctv_df['lon'] >= FIXED_BOUNDS['min_lon']) & (cctv_df['lon'] <= FIXED_BOUNDS['max_lon'])
         ]
     
+    if not lamp_df.empty:
+        lamp_df = lamp_df[
+            (lamp_df['lat'] >= FIXED_BOUNDS['min_lat']) & (lamp_df['lat'] <= FIXED_BOUNDS['max_lat']) &
+            (lamp_df['lon'] >= FIXED_BOUNDS['min_lon']) & (lamp_df['lon'] <= FIXED_BOUNDS['max_lon'])
+        ]
+
+
     noise_df = get_noise_data(**FIXED_BOUNDS)       
     convenience_df = get_convenience_data(**FIXED_BOUNDS) 
     store_df = get_store_data(**FIXED_BOUNDS)       
@@ -57,7 +67,7 @@ df_build = pd.read_csv(BUILD_PATH)
 with st.sidebar:
     # [추가] 가격 필터 슬라이더
     st.header("🔍 필터 설정")
-    with st.expander("원룸 정보(블록)", expanded=True):
+    with st.expander("원룸 정보(블록)", expanded=False):
         deposit_range = st.slider(
             "평균 보증금 (만원)", 
             min_value=50, max_value=1000, 
@@ -74,7 +84,7 @@ with st.sidebar:
             value=(0, 100), step=1
         )
 
-    with st.expander(" 편의/안전", expanded=True):
+    with st.expander(" 편의/안전", expanded=False):
         # 편의점 유무 (체크박스)
         need_conv = st.checkbox("100m 이내 편의점 필수", value=False)
         
@@ -84,13 +94,33 @@ with st.sidebar:
             min_value=0, max_value=10, 
             value=0, step=1
         )
-    st.divider()
+        lamp_min = st.slider(
+            "100m 이내 최소 가로등 개수", 
+            min_value=0, max_value=30, 
+            value=0, step=1
+        )
 
-    st.subheader("시설 표시")
-    show_cctv = st.toggle("CCTV (🎥)", value=True)
-    show_conv = st.toggle("편의점 (🛒)", value=True)
-    show_noise = st.toggle("소음원 (🍺/🎵)", value=False)
-    show_store = st.toggle("상가 (🍴)", value=False)
+    # [추가] Expander 3: 생활 조건 필터
+    with st.expander("생활 조건", expanded=False):
+        # 소음원 개수 (슬라이더: 0 ~ 100개)
+        noise_max = st.slider(
+            "최대 소음원 수 (100m)", 
+            min_value=0, max_value=50, 
+            value=50, step=1
+        )
+        store_min = st.slider(
+            "최소 상가 수 (100m)", 
+            min_value=0, max_value=100, 
+            value=0, step=1
+        )
+
+    st.divider()
+    with st.expander("표시 항목", expanded=True):
+        show_cctv = st.toggle("CCTV (🎥)", value=False)
+        show_lamp_heat = st.toggle("가로등 밀집도(🔥)", value=False) # 히트맵 토글 추가
+        show_conv = st.toggle("편의점 (🛒)", value=False)
+        show_noise = st.toggle("소음원 (🍺/🎵)", value=False)
+        show_store = st.toggle("상가 (🍴)", value=False)
     
     st.divider()
     st.caption(f"📊 분석 대상 건물: {len(df_build)}개")
@@ -142,6 +172,17 @@ if len(merged_df) > 0:
 
     block_stats['cctv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], cctv_df), axis=1)
     block_stats['conv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], convenience_df), axis=1)
+    # [추가] 블록 중심 100m 이내 소음원 개수 계산
+    block_stats['noise_count'] = block_stats.apply(
+        lambda row: count_nearby(row['lat'], row['lon'], noise_df, radius=100), 
+        axis=1
+    )
+    # [추가] 블록 중심 100m 이내 상가 개수 계산
+    block_stats['store_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], store_df), axis=1)
+    block_stats['lamp_count'] = block_stats.apply(
+        lambda row: count_nearby(row['lat'], row['lon'], lamp_df), 
+        axis=1
+    )
 
     # ---------------------------------------------------------
     # [여기에 추가] 사용자가 설정한 슬라이더 값으로 블록 필터링
@@ -152,7 +193,10 @@ if len(merged_df) > 0:
         (block_stats['보증금'] >= deposit_range[0]) & (block_stats['보증금'] <= deposit_range[1]) &
         (block_stats['월세'] >= rent_range[0]) & (block_stats['월세'] <= rent_range[1]) &
         (block_stats['노후도'] >= age_range[0]) & (block_stats['노후도'] <= age_range[1]) &
-        (block_stats['cctv_count'] >= cctv_min) # CCTV 조건
+        (block_stats['cctv_count'] >= cctv_min) &
+        (block_stats['lamp_count'] >= lamp_min) & # CCTV 최소 조건
+        (block_stats['noise_count'] <= noise_max)&
+        (block_stats['store_count'] >= store_min) # [추가] 상가 최소 조건   
     ]
     
     # [추가] 편의점 필수 체크 시: 위에서 걸러진 데이터 중 편의점이 0개인 블록은 제외
@@ -176,6 +220,8 @@ final_cctv = cctv_df if show_cctv else pd.DataFrame()
 final_noise = noise_df if show_noise else pd.DataFrame()
 final_conv = convenience_df if show_conv else pd.DataFrame()
 final_store = store_df if show_store else pd.DataFrame()
+# 5. 지도 그리기 섹션
+final_lamps = lamp_df if show_lamp_heat else pd.DataFrame() # 추가
 
 # [수정] filtered_block_stats를 기준으로 체크
 if len(filtered_block_stats) > 0:
@@ -188,7 +234,8 @@ if len(filtered_block_stats) > 0:
         final_cctv, 
         final_noise, 
         final_conv, 
-        final_store
+        final_store,
+        final_lamps
     )
     
     if m:

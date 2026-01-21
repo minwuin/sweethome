@@ -22,6 +22,7 @@ CCTV_CSV_PATH = os.path.join(DATA_DIR, "cctv.csv")
 NOISE_CSV_PATH = os.path.join(DATA_DIR, "noise.csv")          # 술집 + 노래방
 CONVENIENCE_CSV_PATH = os.path.join(DATA_DIR, "convenience.csv") # 편의점
 STORE_CSV_PATH = os.path.join(DATA_DIR, "store.csv")           # 음식점 + 카페
+LAMP_CSV_PATH = os.path.join(DATA_DIR, "lamp.csv")
 
 TARGET_DONGS = ["조영동", "대동", "임당동", "부적리"]
 
@@ -97,6 +98,19 @@ def get_cctv_data():
             df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
             df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
             return df.dropna(subset=['lat', 'lon']).drop_duplicates(subset=['lat', 'lon'])
+    except: pass
+    return pd.DataFrame()
+
+def get_lamp_data():
+    if not os.path.exists(LAMP_CSV_PATH): return pd.DataFrame()
+    try:
+        df = pd.read_csv(LAMP_CSV_PATH, encoding='utf-8-sig')
+        # 한글 컬럼명을 lat, lon으로 변경
+        df = df.rename(columns={'위도': 'lat', '경도': 'lon'})
+        if 'lat' in df.columns and 'lon' in df.columns:
+            df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
+            df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
+            return df.dropna(subset=['lat', 'lon'])
     except: pass
     return pd.DataFrame()
 
