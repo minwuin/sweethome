@@ -291,12 +291,12 @@ if len(filtered_block_stats) > 0:
             )
 
             # (3) [그 다음] 정렬하여 top5 생성
-            top5 = ranking_df.sort_values(by='total_score', ascending=False).head(5)
+            top3 = ranking_df.sort_values(by='total_score', ascending=False).head(3)
 
             st.write("🔍 **분석된 추천 순위**")
 
             # (4) [마지막] 계산된 top5를 사용하여 리스트 출력
-            for i, (idx, row) in enumerate(top5.iterrows()):
+            for i, (idx, row) in enumerate(top3.iterrows()):
                 cluster_id = int(row['cluster'])
                 score = round(row['total_score'], 1)
                 
