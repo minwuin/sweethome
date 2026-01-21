@@ -113,7 +113,7 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
         current_highlight = lambda x: {'fillColor': '#505050', 'color': '#333333', 'fillOpacity': 0.7, 'weight': 3}
 
         avg_rent, avg_deposit = int(stats['월세']), int(stats['보증금'])
-        count, cctv_cnt, conv_cnt = int(stats['건물명']), int(stats['cctv_count']), int(stats['conv_count'])
+        count, cctv_cnt, conv_cnt = int(stats['room_count']), int(stats['cctv_count']), int(stats['conv_count'])
         avg_age = round(stats['노후도'], 1)
         
         tooltip_html = f"""
@@ -122,7 +122,7 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
             <hr style="margin:5px 0;">
             <b>월세:</b> {avg_rent}만원<br>
             <b>보증금:</b> {avg_deposit}만원<br>
-            <b>평균 노후도:</b> {avg_age}<br><b>건물:</b> {count}개<br>
+            <b>평균 노후도:</b> {avg_age}<br><b>현재 매물:</b> {count}개<br>
             <b>CCTV:</b> {cctv_cnt}개<br>
             <b>편의점:</b> {conv_cnt}개
         </div>

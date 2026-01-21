@@ -6,7 +6,7 @@ from streamlit_folium import st_folium
 from sklearn.cluster import DBSCAN 
 from utils.map_utils import draw_map
 from utils.data_loader import (
-    get_real_estate_data, 
+    get_realtime_zigbang_data, 
     get_cctv_data, 
     get_noise_data, 
     get_convenience_data, 
@@ -31,10 +31,10 @@ FIXED_BOUNDS = {
     'min_lon': 128.750314, 'max_lon': 128.760809
 }
 
-
 # 1. 데이터 로드
-with st.spinner("주변 시설 데이터를 불러오는 중입니다..."):
-    df_price = get_real_estate_data()
+with st.spinner("실시간 매물 및 주변 시설 정보를 불러오는 중..."):
+    # 자동 통합 로직이 포함된 함수 호출
+    df_main = get_realtime_zigbang_data()
     cctv_df = get_cctv_data()
     lamp_df = get_lamp_data()
     
@@ -51,16 +51,21 @@ with st.spinner("주변 시설 데이터를 불러오는 중입니다..."):
             (lamp_df['lon'] >= FIXED_BOUNDS['min_lon']) & (lamp_df['lon'] <= FIXED_BOUNDS['max_lon'])
         ]
 
-
     noise_df = get_noise_data(**FIXED_BOUNDS)       
     convenience_df = get_convenience_data(**FIXED_BOUNDS) 
     store_df = get_store_data(**FIXED_BOUNDS)       
+    
+# --- [Section 3: 데이터 전처리] 수정 ---
+# 1. 수집된 매물 중 지도 범위(영남대역 인근)에 있는 데이터만 추출
+merged_df = df_main[
+    (df_main['lat'] >= FIXED_BOUNDS['min_lat']) & (df_main['lat'] <= FIXED_BOUNDS['max_lat']) &
+    (df_main['lon'] >= FIXED_BOUNDS['min_lon']) & (df_main['lon'] <= FIXED_BOUNDS['max_lon'])
+].copy()
 
-BUILD_PATH = r"C:\minwoin\room\data\buildings.csv"
-if not os.path.exists(BUILD_PATH):
-    st.error("❌ buildings.csv가 없습니다.")
-    st.stop()
-df_build = pd.read_csv(BUILD_PATH)
+# 2. 분석을 위해 가격 및 노후도 데이터를 숫자로 변환 (안전장치)
+merged_df['보증금'] = pd.to_numeric(merged_df['보증금'], errors='coerce').fillna(0)
+merged_df['월세'] = pd.to_numeric(merged_df['월세'], errors='coerce').fillna(0)
+merged_df['노후도'] = pd.to_numeric(merged_df['노후도'], errors='coerce').fillna(0)
 
 # 2. 사이드바 (슬라이더 제거 및 고정값 적용)
 # 2. 사이드바
@@ -70,13 +75,13 @@ with st.sidebar:
     with st.expander("원룸 정보(블록)", expanded=False):
         deposit_range = st.slider(
             "평균 보증금 (만원)", 
-            min_value=50, max_value=500, 
-            value=(50, 500), step=5
+            min_value=10, max_value=6000, 
+            value=(10, 6000), step=50
         )
         rent_range = st.slider(
             "평균 월세 (만원)", 
-            min_value=20, max_value=100, 
-            value=(20, 100), step=5
+            min_value=0, max_value=100, 
+            value=(0, 100), step=5
         )
         age_range = st.slider(
             "평균 노후도", 
@@ -91,22 +96,27 @@ with st.sidebar:
         # CCTV 개수 (슬라이더: 0 ~ 10개)
         cctv_min = st.slider(
             "100m 이내 최소 CCTV 개수", 
-            min_value=0, max_value=10, 
+            min_value=0, max_value=50, 
             value=0, step=1
         )
         lamp_min = st.slider(
             "100m 이내 최소 가로등 개수", 
-            min_value=0, max_value=30, 
+            min_value=0, max_value=50, 
             value=0, step=1
         )
 
     # [추가] Expander 3: 생활 조건 필터
     with st.expander("생활 조건", expanded=False):
+        subway_max = st.slider(
+            "지하철역 도보 거리 (분)", 
+            min_value=0, max_value=60, 
+            value=60, step=1
+        )
         # 소음원 개수 (슬라이더: 0 ~ 100개)
         noise_max = st.slider(
             "최대 소음원 수 (100m)", 
-            min_value=0, max_value=50, 
-            value=50, step=1
+            min_value=0, max_value=100, 
+            value=100, step=1
         )
         store_min = st.slider(
             "최소 상가 수 (100m)", 
@@ -123,25 +133,7 @@ with st.sidebar:
         show_store = st.toggle("상가 (🍴)", value=False)
     
     st.divider()
-    st.caption(f"📊 분석 대상 건물: {len(df_build)}개")
-
-# 3. 데이터 전처리
-df_build['노후도'] = pd.to_numeric(df_build['노후도'], errors='coerce').fillna(0)
-df_build['lat'] = pd.to_numeric(df_build['lat'], errors='coerce')
-df_build['lon'] = pd.to_numeric(df_build['lon'], errors='coerce')
-
-df_build['법정동_정제'] = df_build['법정동'].astype(str).apply(lambda x: x.split()[-1].strip())
-df_price['법정동_정제'] = df_price['법정동'].astype(str).apply(lambda x: x.split()[-1].strip())
-df_price['보증금'] = pd.to_numeric(df_price['보증금'], errors='coerce').fillna(0)
-df_price['월세'] = pd.to_numeric(df_price['월세'], errors='coerce').fillna(0)
-
-price_stats = df_price.groupby('법정동_정제')[['보증금', '월세']].mean().reset_index()
-merged_df = pd.merge(df_build, price_stats, on='법정동_정제', how='left').fillna(0)
-
-merged_df = merged_df[
-    (merged_df['lat'] >= FIXED_BOUNDS['min_lat']) & (merged_df['lat'] <= FIXED_BOUNDS['max_lat']) &
-    (merged_df['lon'] >= FIXED_BOUNDS['min_lon']) & (merged_df['lon'] <= FIXED_BOUNDS['max_lon'])
-].copy()
+    st.caption(f"📊 분석 대상 건물: {len(merged_df)}개")
 
 # 4. DBSCAN 군집화
 @st.cache_data
@@ -154,8 +146,8 @@ def get_clustered_block_stats(_df_build, _cctv, _lamp, _noise, _conv, _store):
         return pd.DataFrame(), pd.DataFrame()
 
     # DBSCAN 설정
-    block_eps = 17
-    block_min = 3
+    block_eps = 19
+    block_min = 1
     coords = np.radians(_df_build[['lat', 'lon']].values)
     kms_per_radian = 6371.0088
     epsilon = (block_eps / 1000) / kms_per_radian
@@ -174,8 +166,10 @@ def get_clustered_block_stats(_df_build, _cctv, _lamp, _noise, _conv, _store):
         '월세': 'mean',
         '보증금': 'mean',
         '노후도': 'mean',
-        '건물명': 'count'
+        '지하철역_도보(분)': 'mean',
+        '매물번호': 'count'
     }).reset_index()
+    block_stats = block_stats.rename(columns={'매물번호': 'room_count', '지하철역_도보(분)': 'subway_walk'})
     
     # 주변 시설 개수 계산 (가장 오래 걸리는 부분)
     def count_nearby(center_lat, center_lon, target_df, radius=100):
@@ -205,7 +199,8 @@ if not block_stats.empty:
         (block_stats['cctv_count'] >= cctv_min) &
         (block_stats['lamp_count'] >= lamp_min) &
         (block_stats['noise_count'] <= noise_max) &
-        (block_stats['store_count'] >= store_min)
+        (block_stats['store_count'] >= store_min) &
+        (block_stats['subway_walk'] <= subway_max)
     ]
     
     # [추가] 편의점 필수 체크 시: 위에서 걸러진 데이터 중 편의점이 0개인 블록은 제외
@@ -238,7 +233,11 @@ if 'selected_cluster' not in st.session_state:
 
 # [수정] filtered_block_stats를 기준으로 체크
 if len(filtered_block_stats) > 0:
-    st.success(f"📍 조건에 맞는 블록을 **{len(filtered_block_stats)}개** 찾았습니다.")
+    total_rooms = int(filtered_block_stats['room_count'].sum())
+    total_blocks = len(filtered_block_stats)
+
+    # 2. 메시지 수정
+    st.success(f"📍 조건에 맞는 매물 **{total_rooms}개**, 블록 **{total_blocks}개**를 찾았습니다!")
     col_left, col_right = st.columns([7, 3])
 
     with col_left:

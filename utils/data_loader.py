@@ -6,6 +6,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import time
 import os
+import numpy as np 
 
 # ==========================================
 # [설정] API 키 및 경로
@@ -13,15 +14,24 @@ import os
 MOLIT_API_KEY = "fba6973ac6f9aed36f2b30b7dcce1fa4f6bef6c6c26cb61aff47144cc68520e5"
 KAKAO_API_KEY = "5b71324d3e681cdeaa038e7725055998"
 
-DATA_DIR = r"C:\minwoin\room\data"
+# 기준 경로 설정
+UTILS_DIR = os.path.dirname(os.path.abspath(__file__)) 
+BASE_DIR = os.path.dirname(UTILS_DIR) 
+
+# 폴더 경로 정의
+DATA_DIR = os.path.join(BASE_DIR, "data")
+ZICBANG_DIR = os.path.join(BASE_DIR, "zicbang")
 if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
 
-# [수정] 파일 경로 정리 (3개로 통합)
-ROOM_CSV_PATH = os.path.join(DATA_DIR, "room.csv")
+# 개별 파일 경로 정의 (일원화)
+ZIGBANG_RAW_PATH = os.path.join(ZICBANG_DIR, "zigbang.csv")
+ZIGBANG_FINAL_PATH = os.path.join(DATA_DIR, "zigbang_with_age.csv")
+BUILDINGS_CSV_PATH = os.path.join(DATA_DIR, "buildings.csv")
+
 CCTV_CSV_PATH = os.path.join(DATA_DIR, "cctv.csv")
-NOISE_CSV_PATH = os.path.join(DATA_DIR, "noise.csv")          # 술집 + 노래방
-CONVENIENCE_CSV_PATH = os.path.join(DATA_DIR, "convenience.csv") # 편의점
-STORE_CSV_PATH = os.path.join(DATA_DIR, "store.csv")           # 음식점 + 카페
+NOISE_CSV_PATH = os.path.join(DATA_DIR, "noise.csv")
+CONVENIENCE_CSV_PATH = os.path.join(DATA_DIR, "convenience.csv")
+STORE_CSV_PATH = os.path.join(DATA_DIR, "store.csv")
 LAMP_CSV_PATH = os.path.join(DATA_DIR, "lamp.csv")
 
 TARGET_DONGS = ["조영동", "대동", "임당동", "부적리"]
@@ -29,63 +39,54 @@ TARGET_DONGS = ["조영동", "대동", "임당동", "부적리"]
 # ==========================================
 # 1. 국토부 실거래가 / CCTV (기존 유지)
 # ==========================================
-def fetch_one_month_data(lawd_cd, deal_ymd):
-    url = "http://apis.data.go.kr/1613000/RTMSDataSvcSHRent/getRTMSDataSvcSHRent"
-    params = {"serviceKey": MOLIT_API_KEY, "LAWD_CD": lawd_cd, "DEAL_YMD": deal_ymd, "numOfRows": 1000, "pageNo": 1}
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200: return []
-        root = ET.fromstring(response.content)
-        if root.findtext(".//resultCode") != "000": return []
-        data_list = []
-        for item in root.findall(".//item"):
-            if item.findtext("jibun", "").strip().startswith("산"): continue
-            data_list.append({
-                "법정동": item.findtext("umdNm", "").strip(),
-                "건축년도": int(item.findtext("buildYear", "0").strip() or 0),
-                "전용면적": float(item.findtext("totalFloorAr", 0)),
-                "보증금": int(item.findtext("deposit", "0").replace(",", "")),
-                "월세": int(item.findtext("monthlyRent", "0").replace(",", "")),
-                "계약일": f"{item.findtext('dealYear')}-{item.findtext('dealMonth')}-{item.findtext('dealDay')}"
-            })
-        return data_list
-    except: return []
 
-def get_real_estate_data(lawd_cd="47290", months=24, force_update=False):
-    if os.path.exists(ROOM_CSV_PATH) and not force_update:
-        try: df = pd.read_csv(ROOM_CSV_PATH, encoding='utf-8-sig')
-        except: df = pd.read_csv(ROOM_CSV_PATH, encoding='cp949')
-        df.columns = df.columns.str.replace('\ufeff', '').str.strip()
-        # [추가] 기존 파일 로드 시에도 보증금 1000만원 초과 데이터 삭제
-        if '보증금' in df.columns:
-            df = df[df['보증금'] <= 1000]
+# utils/data_loader.py 에 추가할 내용
 
-        if '법정동' in df.columns:
-            mask = df['법정동'].apply(lambda x: any(target in str(x) for target in TARGET_DONGS))
-            return df[mask]
-    
-    date_list = [ (datetime.now() - relativedelta(months=i)).strftime("%Y%m") for i in range(months) ]
-    all_data = []
-    for ymd in date_list:
-        all_data.extend(fetch_one_month_data(lawd_cd, ymd))
-        time.sleep(0.05)
-    
-    if not all_data: return pd.DataFrame()
-    df = pd.DataFrame(all_data)
-    df.columns = df.columns.str.replace('\ufeff', '').str.strip()
+def calculate_distance(lat1, lon1, lat2_arr, lon2_arr):
+    R = 6371000 
+    phi1, phi2 = np.radians(lat1), np.radians(lat2_arr)
+    dphi = np.radians(lat2_arr - lat1)
+    dlambda = np.radians(lon2_arr - lon1)
+    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+    return R * c
 
-    # [수정] API로 새로 받아온 데이터에서 보증금 1000만원 초과 제거
-    # 보통 대학가 원룸 블록 분석을 방해하는 '아파트'나 '대형 빌라' 거래를 거르는 역할
-    df = df[df['보증금'] <= 1000]
-    
-    mask = df['법정동'].apply(lambda x: any(target in str(x) for target in TARGET_DONGS))
-    df_filtered = df[mask].copy()
+def get_realtime_zigbang_data():
+    """
+    1. zigbang_with_age.csv(최종본)가 있으면 바로 리턴
+    2. 없으면 zigbang.csv(원본) + buildings.csv(건물)를 합쳐서 생성 후 리턴
+    """
+    # 1. 최종 파일이 이미 존재하는 경우
+    if os.path.exists(ZIGBANG_FINAL_PATH):
+        df = pd.read_csv(ZIGBANG_FINAL_PATH, encoding='utf-8-sig')
+        return df.rename(columns={'위도': 'lat', '경도': 'lon'}, errors='ignore')
 
-    current_year = datetime.now().year
-    df_filtered['노후도'] = df_filtered['건축년도'].apply(lambda x: current_year - x if x > 0 else 0)
+    # 2. 최종 파일이 없을 경우 병합 시작
+    st.info("🔄 처음 실행 시 데이터 통합 작업(노후도 매칭)이 필요합니다. 잠시만 기다려주세요...")
     
-    df_filtered.to_csv(ROOM_CSV_PATH, index=False, encoding='utf-8-sig')
-    return df_filtered
+    if not os.path.exists(ZIGBANG_RAW_PATH) or not os.path.exists(BUILDINGS_CSV_PATH):
+        st.error(f"❌ 필수 데이터가 누락되었습니다.\n- 원본: {ZIGBANG_RAW_PATH}\n- 건물: {BUILDINGS_CSV_PATH}")
+        st.stop()
+
+    df_zig = pd.read_csv(ZIGBANG_RAW_PATH)
+    df_bld = pd.read_csv(BUILDINGS_CSV_PATH)
+
+    b_lats = df_bld['lat'].values
+    b_lons = df_bld['lon'].values
+    b_ages = df_bld['노후도'].values
+
+    def match_age(row):
+        dists = calculate_distance(row['위도'], row['경도'], b_lats, b_lons)
+        min_idx = np.argmin(dists)
+        return b_ages[min_idx] if dists[min_idx] <= 20 else 0
+
+    df_zig['노후도'] = df_zig.apply(match_age, axis=1)
+    
+    # 통합 파일 저장
+    df_zig.to_csv(ZIGBANG_FINAL_PATH, index=False, encoding='utf-8-sig')
+    st.success(f"✅ 통합 완료! '{os.path.basename(ZIGBANG_FINAL_PATH)}' 파일이 생성되었습니다.")
+    
+    return df_zig.rename(columns={'위도': 'lat', '경도': 'lon'}, errors='ignore')
 
 def get_cctv_data():
     if not os.path.exists(CCTV_CSV_PATH): return pd.DataFrame()
