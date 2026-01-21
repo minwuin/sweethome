@@ -53,16 +53,25 @@ if not os.path.exists(BUILD_PATH):
 df_build = pd.read_csv(BUILD_PATH)
 
 # 2. 사이드바 (슬라이더 제거 및 고정값 적용)
+# 2. 사이드바
 with st.sidebar:
-    st.header("🔍 설정")
+    # [추가] 가격 필터 슬라이더
+    st.header("🔍 필터 설정")
+    with st.expander("💰 가격 조건 (블록 평균)", expanded=True):
+        deposit_range = st.slider(
+            "평균 보증금 (만원)", 
+            min_value=50, max_value=2000, 
+            value=(50, 2000), step=10
+        )
+        rent_range = st.slider(
+            "평균 월세 (만원)", 
+            min_value=20, max_value=100, 
+            value=(20, 100), step=5
+        )
     
-    # [수정] 사용자가 조작 불가능하게 텍스트로만 안내
-    with st.expander("🧩 분석 기준 (고정됨)", expanded=True):
-        st.info("📌 **블록 기준:** 반경 17m / 최소 3개 건물")
-        # 내부 변수로 고정
-        block_eps = 17
-        block_min = 3
-
+    st.divider()
+    st.subheader("시설 표시")
+    # ... (이하 show_cctv 등 기존 코드 유지)
     st.divider()
     st.subheader("시설 표시")
     show_cctv = st.toggle("CCTV (🎥)", value=True)
@@ -93,6 +102,8 @@ merged_df = merged_df[
 
 # 4. DBSCAN 군집화
 if len(merged_df) > 0:
+    block_eps = 17
+    block_min = 3
     coords = np.radians(merged_df[['lat', 'lon']].values)
     kms_per_radian = 6371.0088
     epsilon = (block_eps / 1000) / kms_per_radian
@@ -118,9 +129,27 @@ if len(merged_df) > 0:
     block_stats['cctv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], cctv_df), axis=1)
     block_stats['conv_count'] = block_stats.apply(lambda row: count_nearby(row['lat'], row['lon'], convenience_df), axis=1)
 
+    # ---------------------------------------------------------
+    # [여기에 추가] 사용자가 설정한 슬라이더 값으로 블록 필터링
+    # ---------------------------------------------------------
+    # 1. 블록별 평균 가격이 슬라이더 범위 내에 있는지 확인
+    filtered_block_stats = block_stats[
+        (block_stats['보증금'] >= deposit_range[0]) & (block_stats['보증금'] <= deposit_range[1]) &
+        (block_stats['월세'] >= rent_range[0]) & (block_stats['월세'] <= rent_range[1])
+    ]
+    
+    # 2. 필터링된 블록들의 cluster ID 목록을 가져옴
+    valid_cluster_ids = filtered_block_stats['cluster'].tolist()
+    
+    # 3. 지도에 표시할 개별 건물 데이터도 해당 블록 ID만 남김
+    filtered_clustered_df = clustered_df[clustered_df['cluster'].isin(valid_cluster_ids)]
+
 else:
     clustered_df = pd.DataFrame()
     block_stats = pd.DataFrame()
+    # 데이터가 없을 경우를 대비해 필터링 변수도 초기화
+    filtered_block_stats = pd.DataFrame()
+    filtered_clustered_df = pd.DataFrame()
 
 # 5. 지도 그리기
 final_cctv = cctv_df if show_cctv else pd.DataFrame()
@@ -128,12 +157,23 @@ final_noise = noise_df if show_noise else pd.DataFrame()
 final_conv = convenience_df if show_conv else pd.DataFrame()
 final_store = store_df if show_store else pd.DataFrame()
 
-if len(block_stats) > 0:
-    st.success(f"📍 총 **{len(block_stats)}개**의 원룸 블록을 찾았습니다.")
-    m = draw_map(clustered_df, block_stats, final_cctv, final_noise, final_conv, final_store)
+# [수정] filtered_block_stats를 기준으로 체크
+if len(filtered_block_stats) > 0:
+    st.success(f"📍 조건에 맞는 블록을 **{len(filtered_block_stats)}개** 찾았습니다.")
+    
+    # [수정] draw_map에 필터링된 데이터 전달
+    m = draw_map(
+        filtered_clustered_df, 
+        filtered_block_stats, 
+        final_cctv, 
+        final_noise, 
+        final_conv, 
+        final_store
+    )
+    
     if m:
         st_folium(m, width="100%", height=600)
     else:
         st.error("지도 생성 실패")
 else:
-    st.warning("블록을 형성할 수 없습니다.")
+    st.warning("선택하신 가격 조건에 맞는 블록이 없습니다.")
