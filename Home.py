@@ -75,8 +75,8 @@ with st.sidebar:
     with st.expander("원룸 정보(블록)", expanded=False):
         deposit_range = st.slider(
             "평균 보증금 (만원)", 
-            min_value=10, max_value=6000, 
-            value=(10, 6000), step=50
+            min_value=10, max_value=3000, 
+            value=(10, 3000), step=50
         )
         rent_range = st.slider(
             "평균 월세 (만원)", 
@@ -96,7 +96,7 @@ with st.sidebar:
         # CCTV 개수 (슬라이더: 0 ~ 10개)
         cctv_min = st.slider(
             "100m 이내 최소 CCTV 개수", 
-            min_value=0, max_value=50, 
+            min_value=0, max_value=30, 
             value=0, step=1
         )
         lamp_min = st.slider(
@@ -109,18 +109,18 @@ with st.sidebar:
     with st.expander("생활 조건", expanded=False):
         subway_max = st.slider(
             "지하철역 도보 거리 (분)", 
-            min_value=0, max_value=60, 
-            value=60, step=1
+            min_value=0, max_value=30, 
+            value=30, step=1
         )
         # 소음원 개수 (슬라이더: 0 ~ 100개)
         noise_max = st.slider(
             "최대 소음원 수 (100m)", 
-            min_value=0, max_value=100, 
-            value=100, step=1
+            min_value=0, max_value=50, 
+            value=50, step=1
         )
         store_min = st.slider(
             "최소 상가 수 (100m)", 
-            min_value=0, max_value=100, 
+            min_value=0, max_value=50, 
             value=0, step=1
         )
 
@@ -240,6 +240,7 @@ if len(filtered_block_stats) > 0:
     st.success(f"📍 조건에 맞는 매물 **{total_rooms}개**, 블록 **{total_blocks}개**를 찾았습니다!")
     col_left, col_right = st.columns([7, 3])
 
+
     with col_left:
         # 지도 출력
         m = draw_map(
@@ -250,9 +251,20 @@ if len(filtered_block_stats) > 0:
         # 나중에 클릭 이벤트를 잡기 위해 변수 output에 저장
         output = st_folium(m, width="100%", height=650, key="main_map")
 
+# 2. 명시적으로 클릭된 객체의 ID 추출 (에러 방지 로직 포함)
+        if output and "last_active_drawing" in output:
+            drawing = output["last_active_drawing"]
+            if drawing is not None:
+                clicked_id = drawing.get("properties", {}).get("cluster_id")
+                
+                # 새로운 블록을 클릭했을 때만 세션 상태 업데이트 및 리런
+                if clicked_id is not None and st.session_state.selected_cluster != clicked_id:
+                    st.session_state.selected_cluster = clicked_id
+                    st.rerun()
+
     with col_right:
         with st.container(border=True):
-            st.subheader("순위")
+            st.subheader("블록 랭킹")
             
             # (1) UI 및 가중치 설정
             priority = st.radio(
@@ -303,5 +315,37 @@ if len(filtered_block_stats) > 0:
                 if st.button(f"🥇 {i+1}위: Block #{cluster_id} ({score}점)", key=f"rank_{cluster_id}", use_container_width=True):
                     st.session_state.selected_cluster = cluster_id
                     st.rerun()
+
+        with st.container(border=True):
+            st.subheader("블록 매물 정보")
+            if st.session_state.selected_cluster is not None:
+                target_id = st.session_state.selected_cluster
+                
+                # [cite_start]해당 블록의 매물만 필터링 [cite: 1, 3]
+                rooms_in_block = filtered_clustered_df[filtered_clustered_df['cluster'] == target_id]
+                
+                with st.container(border=True):
+                    st.write(f"Block #{target_id} 매물 목록")
+                    
+                    if not rooms_in_block.empty:
+                        # [cite_start]필요한 정보만 나열 (매물번호, 보증금, 월세 등) [cite: 1, 3]
+                        st.dataframe(
+                            rooms_in_block[['매물번호', '보증금', '월세', '층', '노후도']],
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("해당 블록에 조건에 맞는 매물이 없습니다.")
+                    
+                    col_btn_1, col_btn_2 = st.columns([6, 4])
+                    with col_btn_2:
+                        if st.button("선택 해제", use_container_width=True):
+                            st.query_params.clear() # URL 파라미터 삭제
+                            st.session_state.selected_cluster = None
+                            st.rerun()
+            else:
+                # 블록이 선택되지 않았을 때 표시되는 안내 메시지
+                st.info("👆 지도 또는 위에서 블록을 클릭해 주세요!")
+                    
 else:
     st.warning("선택하신 조건에 맞는 블록이 없습니다.")

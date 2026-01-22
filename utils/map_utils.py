@@ -149,11 +149,20 @@ def draw_map(clustered_df, block_stats, cctv_df=None, noise_df=None, conv_df=Non
         }
         
         # 블록 영역을 가장 마지막에 그려서 툴팁이 최상단에 오도록 함
+        popup_html = f"""
+        <div style="font-family:sans-serif; text-align:center; width:150px;">
+            <h4 style="margin:0;">Block #{cluster_id}</h4>
+            <p style="font-size:11px; color:gray;">매물 {count}개</p>
+            <p style="font-size:12px;"><b>이 블록이 선택되었습니다.</b></p>
+        </div>
+        """
+
         folium.GeoJson(
             geo_json_data,
-            style_function=current_style,   # 선택 여부가 반영된 동적 스타일 적용
+            style_function=current_style,
             highlight_function=current_highlight,
-            tooltip=tooltip_html
+            tooltip=tooltip_html,
+            popup=folium.Popup(popup_html, max_width=200)
         ).add_to(m)
 
         # 블록 번호 마커
