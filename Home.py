@@ -11,8 +11,30 @@ from utils.data_loader import (
     get_noise_data, 
     get_convenience_data, 
     get_store_data,
-    get_lamp_data
+    get_lamp_data,
+    get_ors_walking_duration
 )
+
+DESTINATION = [35.8337, 128.6843]       # 대구스마트시티센터
+SUSUNG_STATION = [35.8427, 128.6799]    # 수성알파시티역
+SUSUNG_BUS_STOP = [35.8420, 128.6813]   # 수성알파시티역 정거장
+STADIUM_BUS_STOP = [35.8328, 128.6848]  # 경기장네거리1 정거장
+YU_STATION = [35.8363, 128.7529]        # 영남대역
+
+if 'calc_result' not in st.session_state:
+    st.session_state.calc_result = None
+
+if 'fixed_walk_times' not in st.session_state:
+    with st.spinner("🚌 대중교통 환승 구간 정보를 계산 중..."):
+        # 고정 구간은 최초 1회만 계산
+        w2_fixed = get_ors_walking_duration(SUSUNG_STATION, SUSUNG_BUS_STOP)
+        w3_fixed = get_ors_walking_duration(STADIUM_BUS_STOP, DESTINATION)
+        
+        # 값이 0으로 올 경우를 대비한 최소값(Safe-guard) 설정
+        st.session_state.fixed_walk_times = {
+            'w2': w2_fixed if w2_fixed > 0 else 2, 
+            'w3': w3_fixed if w3_fixed > 0 else 4
+        }    
 
 def calculate_distance(lat1, lon1, lat2_arr, lon2_arr):
     R = 6371000 
@@ -22,6 +44,37 @@ def calculate_distance(lat1, lon1, lat2_arr, lon2_arr):
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
     return R * c
+
+def calculate_details_for_visual(block_lat, block_lon):
+    # 1. ORS 도보 계산
+    walk_to_yu = get_ors_walking_duration([block_lat, block_lon], YU_STATION)
+    walk_to_bus = get_ors_walking_duration(SUSUNG_STATION, SUSUNG_BUS_STOP)
+    walk_to_center = get_ors_walking_duration(STADIUM_BUS_STOP, DESTINATION)
+    
+    # 2. 교통수단별 시간 (대기 시간 포함)
+    subway_segment = 11 + 5  # 이동 11분 + 대기 5분
+    bus_segment = 5 + 5      # 이동 5분 + 대기 5분
+    
+    # 3. 시각화(가로선)를 위한 구간별 데이터 구조화
+    # 각 지점 도달 시점의 누적 시간을 계산하여 타임라인 생성
+    timeline = [
+        {"지점": "출발", "소요": 0},
+        {"지점": "영남대역", "소요": walk_to_yu},
+        {"지점": "수성알파시티역", "소요": subway_segment},
+        {"지점": "스마트시티센터", "소요": walk_to_bus + bus_segment + walk_to_center}
+    ]
+    
+    total_time = walk_to_yu + subway_segment + walk_to_bus + bus_segment + walk_to_center
+    
+    return {
+        "total": total_time,
+        "segments": {
+            "도보_총": walk_to_yu + walk_to_bus + walk_to_center,
+            "지하철(대기포함)": subway_segment,
+            "버스(대기포함)": bus_segment
+        },
+        "timeline": timeline
+    }
 
 st.set_page_config(layout="wide", page_title="SweetHome - 영남대 원룸")
 st.title("📍 SweetHome: 영남대 자취방 지도 (블록 분석)")
@@ -261,6 +314,101 @@ if len(filtered_block_stats) > 0:
                 if clicked_id is not None and st.session_state.selected_cluster != clicked_id:
                     st.session_state.selected_cluster = clicked_id
                     st.rerun()
+
+        
+        if st.session_state.selected_cluster is not None:
+            target_id = st.session_state.selected_cluster
+
+            if "last_id" not in st.session_state or st.session_state.last_id != target_id:
+                st.session_state.calc_result = None
+                st.session_state.last_id = target_id
+
+
+            with st.container(border=True):    
+                col_title, col_btn = st.columns([7, 3])
+                with col_title:
+                    st.subheader(f"Block #{target_id} → 교육장까지 얼마나 걸릴까요?")
+                
+                with col_btn:
+                    calculate_clicked = st.button("🚀 소요 시간 계산하기", use_container_width=True)
+
+                # 2. 계산 로직 실행
+                if calculate_clicked:
+                # 가로로 긴 프로그레스 바 생성
+                    progress_bar = st.progress(0)
+                    status_text = st.empty() # 상태 메시지를 보낼 자리
+                    
+                    status_text.caption("⏳ 최적 도보 경로 분석 중...")
+                    progress_bar.progress(30) # 30% 진행 표시
+                    
+                    # --- 실제 계산 로직 시작 ---
+                    selected_block = filtered_block_stats[filtered_block_stats['cluster'] == target_id].iloc[0]
+                    b_lat, b_lon = selected_block['lat'], selected_block['lon']
+                    
+                    # 도보 구간 계산 (ORS API)
+                    w1 = get_ors_walking_duration([b_lat, b_lon], [35.8363, 128.7529])
+                    progress_bar.progress(60) # 60% 진행 표시
+                    
+                    w2 = st.session_state.fixed_walk_times['w2']
+                    w3 = st.session_state.fixed_walk_times['w3']
+                    
+                    subway_total, bus_total = 16, 10
+                    total_min = w1 + subway_total + w2 + bus_total + w3
+                    
+                    progress_bar.progress(100) # 완료!
+                    status_text.empty() # 메시지 삭제
+                    progress_bar.empty() # 가로 바 삭제
+                    # --- 실제 계산 로직 종료 ---
+
+                    st.session_state.calc_result = {
+                        'total': total_min, 'w1': w1, 'w2': w2, 'w3': w3,
+                        'subway': subway_total, 'bus': bus_total
+                    }
+                    st.rerun()
+                if st.session_state.calc_result:
+                    res = st.session_state.calc_result
+                    st.markdown(f"""
+<div style="background-color: #ffffff; padding: 10px 15px; border-radius: 15px; border: 1px solid #ececec; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-top: 10px;">
+<h3 style="margin-top:0; text-align:center; font-family: 'Pretendard', sans-serif;">
+총 소요 시간: <span style="color:#e74c3c; font-weight:800;">약 {res['total']}분</span>
+</h3>
+<div style="display: flex; align-items: center; justify-content: space-between; margin-top: 20px 20px; position: relative;">
+<div style="position: absolute; top: 15px; left: 10%; right: 10%; height: 2px; background-color: #e0e0e0; z-index: 1;"></div>
+<div style="z-index: 2; text-align: center; width: 20%;">
+<div style="width: 35px; height: 35px; background: #3498db; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🏠</div>
+<div style="font-size: 13px; font-weight: 700; margin-top: 8px;">내 방</div>
+<div style="font-size: 11px; color: #5d6d7e; background: #ebf5fb; border-radius: 10px; padding: 2px 5px; margin-top: 3px;">도보 {res['w1']}분</div>
+</div>
+<div style="z-index: 2; text-align: center; width: 20%;">
+<div style="width: 35px; height: 35px; background: #2ecc71; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🚇</div>
+<div style="font-size: 13px; font-weight: 700; margin-top: 8px;">영남대역</div>
+<div style="font-size: 11px; color: #1d8348; background: #e9f7ef; border-radius: 10px; padding: 2px 5px; margin-top: 3px;">지하철 {res['subway']}분</div>
+</div>
+<div style="z-index: 2; text-align: center; width: 20%;">
+<div style="width: 35px; height: 35px; background: #3498db; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🏃</div>
+<div style="font-size: 13px; font-weight: 700; margin-top: 8px;">알파시티역</div>
+<div style="font-size: 11px; color: #5d6d7e; background: #ebf5fb; border-radius: 10px; padding: 2px 5px; margin-top: 3px;">도보 {res['w2']}분</div>
+</div>
+<div style="z-index: 2; text-align: center; width: 20%;">
+<div style="width: 35px; height: 35px; background: #f1c40f; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🚌</div>
+<div style="font-size: 13px; font-weight: 700; margin-top: 8px;">버스정거장</div>
+<div style="font-size: 11px; color: #9a7d0a; background: #fef9e7; border-radius: 10px; padding: 2px 5px; margin-top: 3px;">버스 {res['bus']}분</div>
+</div>
+<div style="z-index: 2; text-align: center; width: 20%;">
+<div style="width: 35px; height: 35px; background: #e74c3c; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🏁</div>
+<div style="font-size: 13px; font-weight: 700; margin-top: 8px;">시티센터</div>
+<div style="font-size: 11px; color: #922b21; background: #fdedec; border-radius: 10px; padding: 2px 5px; margin-top: 3px;">도보 {res['w3']}분</div>
+</div>
+</div>
+<p style="text-align: center; color: #95a5a6; font-size: 11px; margin-top: 25px;">
+* 지하철/버스 소요시간에는 평균 대기시간(5분)이 포함되어 있습니다.
+</p>
+</div>
+""", unsafe_allow_html=True)
+                st.markdown(f"""  """, unsafe_allow_html=True)
+
+        else:
+            st.info("💡 분석하고 싶은 블록을 지도에서 먼저 선택해 주세요.")
 
     with col_right:
         with st.container(border=True):

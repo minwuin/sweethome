@@ -13,6 +13,7 @@ import numpy as np
 # ==========================================
 MOLIT_API_KEY = "fba6973ac6f9aed36f2b30b7dcce1fa4f6bef6c6c26cb61aff47144cc68520e5"
 KAKAO_API_KEY = "5b71324d3e681cdeaa038e7725055998"
+ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQxOTY0MTQ1MTI0MDRlZGZiYWJlMWMxNTYzN2E0NDc2IiwiaCI6Im11cm11cjY0In0="
 
 # 기준 경로 설정
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__)) 
@@ -50,6 +51,27 @@ def calculate_distance(lat1, lon1, lat2_arr, lon2_arr):
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
     return R * c
+
+@st.cache_data
+def get_ors_walking_duration(start_coords, end_coords):
+    # ORS API는 [경도, 위도] 순서를 사용함에 주의
+    url = f"https://api.openrouteservice.org/v2/directions/foot-walking"
+    headers = {
+        'Authorization': ORS_API_KEY,
+        'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8'
+    }
+    params = {
+        'start': f"{start_coords[1]},{start_coords[0]}",
+        'end': f"{end_coords[1]},{end_coords[0]}"
+    }
+    
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        # 소요 시간(초) 추출 후 분 단위로 변환
+        duration_seconds = data['features'][0]['properties']['summary']['duration']
+        return round(duration_seconds / 60)
+    return 0
 
 def get_realtime_zigbang_data():
     """
